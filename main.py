@@ -6,7 +6,7 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from database import get_db
-from models import User, Follow, Post, PostImage
+from models import User, Follow, Post, PostImage,PostLike
 from schema import TokenPair, UserCreate, UserLogin, UserUpdate
 from database import engine, Base, SessionLocal
 import uuid
@@ -511,7 +511,190 @@ async def create_post(
         "images": image_urls
     }
     
+    
+@app.post("/posts/{post_id}/like")
+def like_post(
+    post_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    existing = db.query(PostLike).filter(
+        PostLike.post_id == post_id,
+        PostLike.user_id == current_user.id
+    ).first()
+
+    if existing:
+        raise HTTPException(status_code=400, detail="Already liked")
+
+    like = PostLike(
+        id=str(uuid.uuid4()),
+        post_id=post_id,
+        user_id=current_user.id
+    )
+
+    db.add(like)
+    db.commit()
+
+    return {"message": "Post liked"}
 router = APIRouter()
+
+@app.delete("/posts/{post_id}/like")
+def unlike_post(
+    post_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    like = db.query(PostLike).filter(
+        PostLike.post_id == post_id,
+        PostLike.user_id == current_user.id
+    ).first()
+
+    if not like:
+        raise HTTPException(status_code=404, detail="Not liked yet")
+
+    db.delete(like)
+    db.commit()
+
+    return {"message": "Unliked"}
+
+
+@app.delete("/posts/{post_id}/like")
+def unlike_post(
+    post_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    like = db.query(PostLike).filter(
+        PostLike.post_id == post_id,
+        PostLike.user_id == current_user.id
+    ).first()
+
+    if not like:
+        raise HTTPException(status_code=404, detail="Not liked yet")
+
+    db.delete(like)
+    db.commit()
+
+    return {"message": "Unliked"}
+
+
+
+@app.get("/posts/{post_id}/likes")
+def get_likes(post_id: str, db: Session = Depends(get_db)):
+    count = db.query(PostLike).filter(PostLike.post_id == post_id).count()
+    return {"post_id": post_id, "likes": count}
+
+from models import Comment
+from schema import CommentCreate
+
+# ================= CREATE POST =================
+@app.post("/post-with-image")
+def create_post(
+    author_id: str = Form(...),
+    content: str = Form(...),
+    file: UploadFile = File(None),
+    db: Session = Depends(get_db)
+):
+
+    print("AUTHOR:", author_id)
+    print("CONTENT:", content)
+    print("FILE:", file.filename if file else "NO FILE")
+
+    image_url = None
+
+    # ================= SAVE IMAGE =================
+    if file and file.filename:
+        filename = f"{uuid.uuid4()}_{file.filename}"
+        path = f"uploads/{filename}"
+
+        with open(path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        image_url = f"/uploads/{filename}"
+
+    # ================= SAVE POST =================
+    post = Post(
+        id=str(uuid.uuid4()),
+        author_id=author_id,
+        content=content,
+        image=image_url,
+        created_at=datetime.utcnow()
+    )
+
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+
+    return {"message": "post created"}
+
+
+
+@app.post("/posts/{post_id}/comment")
+def create_comment(
+    post_id: str,
+    comment: CommentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    new_comment = Comment(
+        id=str(uuid.uuid4()),
+        post_id=post_id,
+        author_id=current_user.id,
+        content=comment.content,
+        parent_id=comment.parent_id
+    )
+
+    db.add(new_comment)
+    db.commit()
+    db.refresh(new_comment)
+
+    return {
+        "message": "Comment added",
+        "comment": {
+            "id": new_comment.id,
+            "content": new_comment.content,
+            "post_id": new_comment.post_id,
+            "author_id": new_comment.author_id,
+            "parent_id": new_comment.parent_id,
+            "created_at": new_comment.created_at
+        }
+    }
+    
+@app.get("/posts/{post_id}/comments")
+def get_comments(post_id: str, db: Session = Depends(get_db)):
+    comments = db.query(Comment).filter(Comment.post_id == post_id).all()
+
+    return [
+        {
+            "id": c.id,
+            "content": c.content,
+            "author_id": c.author_id,
+            "parent_id": c.parent_id,
+            "created_at": c.created_at
+        }
+        for c in comments
+    ]
+
+@app.delete("/comments/{comment_id}")
+def delete_comment(
+    comment_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    comment = db.query(Comment).filter(Comment.id == comment_id).first()
+
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    if comment.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    db.delete(comment)
+    db.commit()
+
+    return {"message": "Comment deleted"}
+
+
 
 UPLOAD_DIR = "uploads/user_profile"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
