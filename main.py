@@ -333,38 +333,46 @@ def create_post(
     file: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
+    try:
+        print("AUTHOR:", author_id)
+        print("CONTENT:", content)
 
-    print("AUTHOR:", author_id)
-    print("CONTENT:", content)
-    print("FILE:", file.filename if file else "NO FILE")
+        os.makedirs("uploads/posts", exist_ok=True)
 
-    image_url = None
+        image_url = None
 
-    # ================= SAVE IMAGE =================
-    if file and file.filename:
-        filename = f"{uuid.uuid4()}_{file.filename}"
-        path = f"uploads/{filename}"
+        # ================= SAVE IMAGE =================
+        if file and file.filename:
+            ext = file.filename.split(".")[-1]
+            filename = f"{uuid.uuid4()}.{ext}"
+            path = os.path.join("uploads/posts", filename)
 
-        with open(path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            with open(path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
 
-        image_url = f"/uploads/{filename}"
+            image_url = f"/uploads/posts/{filename}"
 
-    # ================= SAVE POST =================
-    post = Post(
-        id=str(uuid.uuid4()),
-        author_id=author_id,
-        content=content,
-        image=image_url,
-        created_at=datetime.utcnow()
-    )
+        # ================= SAVE POST =================
+        post = Post(
+            id=str(uuid.uuid4()),
+            author_id=author_id,
+            content=content,
+            image=image_url,   # ✔ FIXED
+            created_at=datetime.utcnow()
+        )
 
-    db.add(post)
-    db.commit()
-    db.refresh(post)
+        db.add(post)
+        db.commit()
+        db.refresh(post)
 
-    return {"message": "post created"}
+        return {
+            "message": "post created",
+            "image": image_url
+        }
 
+    except Exception as e:
+        print("ERROR:", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/posts/{post_id}/like")
 def like_post(
