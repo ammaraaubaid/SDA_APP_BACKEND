@@ -4,7 +4,7 @@ import shutil
 
 import bcrypt
 from datetime import datetime, timedelta
-
+from sqlalchemy import or_
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.staticfiles import StaticFiles
@@ -438,6 +438,24 @@ def get_comments(post_id: str, db: Session = Depends(get_db)):
         for c in comments
     ]
 
+@app.get("/search")
+def search_users(query: str, db: Session = Depends(get_db)):
+    users = db.query(User).filter(
+        or_(
+            User.username.ilike(f"%{query}%"),
+            User.full_name.ilike(f"%{query}%")
+        )
+    ).all()
+
+    return [
+        {
+            "id": user.id,
+            "username": user.username,
+            "name": user.full_name,
+            "avatar": f"https://sda-app-backend.onrender.com{user.profile_pic}" if user.profile_pic else None
+        }
+        for user in users
+    ]
 
 @app.delete("/comments/{comment_id}")
 def delete_comment(
