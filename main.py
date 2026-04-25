@@ -28,7 +28,7 @@ app.add_middleware(
     "http://localhost:8000",
     "http://localhost:8001",
     "https://sda-front-end-xhiu.vercel.app"
-]
+],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
