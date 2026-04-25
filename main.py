@@ -117,6 +117,7 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
     return {"message": "User created successfully"}
 
 
+
 @app.post("/login", response_model=TokenPair)
 def login(
     username: str = Form(...),
@@ -323,38 +324,44 @@ def get_following(user_id: str, db: Session = Depends(get_db)):
 
 
 # ── POSTS ─────────────────────────────────────────────────
-
-@app.post("/posts")
-async def create_post(
-    content: str,
-    files: list[UploadFile] = File(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+@app.post("/post-with-image")
+def create_post(
+    author_id: str = Form(...),
+    content: str = Form(...),
+    file: UploadFile = File(None),
+    db: Session = Depends(get_db)
 ):
-    new_post = Post(id=str(uuid.uuid4()), author_id=current_user.id, content=content)
-    db.add(new_post)
-    db.commit()
-    db.refresh(new_post)
 
-    image_urls = []
-    for file in files:
-        if not file.content_type.startswith("image/"):
-            continue
+    print("AUTHOR:", author_id)
+    print("CONTENT:", content)
+    print("FILE:", file.filename if file else "NO FILE")
 
-        ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
-        filename = f"{uuid.uuid4()}.{ext}"
-        filepath = f"uploads/posts/{filename}"
+    image_url = None
 
-        with open(filepath, "wb") as buffer:
+    # ================= SAVE IMAGE =================
+    if file and file.filename:
+        filename = f"{uuid.uuid4()}_{file.filename}"
+        path = f"uploads/{filename}"
+
+        with open(path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        image = PostImage(id=str(uuid.uuid4()), post_id=new_post.id, image_url=f"/uploads/posts/{filename}")
-        db.add(image)
-        image_urls.append(image.image_url)
+        image_url = f"/uploads/{filename}"
 
+    # ================= SAVE POST =================
+    post = Post(
+        id=str(uuid.uuid4()),
+        author_id=author_id,
+        content=content,
+        image=image_url,
+        created_at=datetime.utcnow()
+    )
+
+    db.add(post)
     db.commit()
+    db.refresh(post)
 
-    return {"message": "Post created", "post_id": new_post.id, "images": image_urls}
+    return {"message": "post created"}
 
 
 @app.post("/posts/{post_id}/like")
@@ -371,6 +378,30 @@ def like_post(
 
     return {"message": "Post liked"}
 
+# ================= FEED =================
+@app.get("/feed")
+def feed(db: Session = Depends(get_db)):
+
+    posts = db.query(Post).order_by(Post.created_at.desc()).all()
+
+    result = []
+
+    for p in posts:
+
+        user = db.query(User).filter(User.id == p.author_id).first()
+
+        result.append({
+            "id": str(p.id),
+            "username": user.username if user else "unknown",
+            "content": p.content,
+
+            # 🔥 IMPORTANT FIX
+            "image": p.image,
+
+            "created_at": p.created_at.isoformat()
+        })
+
+    return result
 
 @app.delete("/posts/{post_id}/like")
 def unlike_post(
