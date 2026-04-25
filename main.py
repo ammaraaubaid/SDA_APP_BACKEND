@@ -403,6 +403,32 @@ def feed(db: Session = Depends(get_db)):
 
     return result
 
+@app.get("/chats")
+def get_chats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Get users you follow
+    following = db.query(Follow).filter(
+        Follow.follower_id == current_user.id
+    ).all()
+
+    user_ids = [f.following_id for f in following]
+
+    users = db.query(User).filter(User.id.in_(user_ids)).all()
+
+    return [
+        {
+            "user_id": user.id,
+            "username": user.username,
+            "profile_pic": f"https://sda-app-backend.onrender.com{user.profile_pic}" if user.profile_pic else None,
+            "last_message": "Start chatting 👋",  # placeholder
+            "timestamp": None,
+        }
+        for user in users
+    ]
+
+
 @app.delete("/posts/{post_id}/like")
 def unlike_post(
     post_id: str,
