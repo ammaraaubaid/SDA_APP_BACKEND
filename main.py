@@ -26,7 +26,7 @@ app.add_middleware(
     
     allow_origins=[
     "https://sda-front-end-1a92.vercel.app"
-]
+        ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
