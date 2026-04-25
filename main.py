@@ -25,7 +25,7 @@ app.add_middleware(
     CORSMiddleware,
     
     allow_origins=[
-    "https://sda-front-end-1a92.vercel.app"
+    "https://sda-front-end-xhiu.vercel.app"
         ],
     allow_credentials=True,
     allow_methods=["*"],
