@@ -326,6 +326,7 @@ def get_following(user_id: str, db: Session = Depends(get_db)):
 
 
 # ── POSTS ─────────────────────────────────────────────────
+#======CREATE POST =================
 @app.post("/post-with-image")
 def create_post(
     author_id: str = Form(...),
@@ -333,60 +334,37 @@ def create_post(
     file: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
-    try:
-        print("AUTHOR:", author_id)
-        print("CONTENT:", content)
 
-        os.makedirs("uploads/posts", exist_ok=True)
+    print("AUTHOR:", author_id)
+    print("CONTENT:", content)
+    print("FILE:", file.filename if file else "NO FILE")
 
-        image_url = None
+    image_url = None
 
-        # ================= SAVE IMAGE =================
-        if file and file.filename:
-            ext = file.filename.split(".")[-1]
-            filename = f"{uuid.uuid4()}.{ext}"
-            path = os.path.join("uploads/posts", filename)
+    # ================= SAVE IMAGE =================
+    if file and file.filename:
+        filename = f"{uuid.uuid4()}_{file.filename}"
+        path = f"uploads/{filename}"
 
-            with open(path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+        with open(path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-            image_url = f"/uploads/posts/{filename}"
+        image_url = f"/uploads/{filename}"
 
-        # ================= SAVE POST =================
-        post = Post(
-            id=str(uuid.uuid4()),
-            author_id=author_id,
-            content=content,
-            image=image_url,   # ✔ FIXED
-            created_at=datetime.utcnow()
-        )
+    # ================= SAVE POST =================
+    post = Post(
+        id=str(uuid.uuid4()),
+        author_id=author_id,
+        content=content,
+        image=image_url,
+        created_at=datetime.utcnow()
+    )
 
-        db.add(post)
-        db.commit()
-        db.refresh(post)
-
-        return {
-            "message": "post created",
-            "image": image_url
-        }
-
-    except Exception as e:
-        print("ERROR:", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/posts/{post_id}/like")
-def like_post(
-    post_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    if db.query(PostLike).filter(PostLike.post_id == post_id, PostLike.user_id == current_user.id).first():
-        raise HTTPException(status_code=400, detail="Already liked")
-
-    db.add(PostLike(id=str(uuid.uuid4()), post_id=post_id, user_id=current_user.id))
+    db.add(post)
     db.commit()
+    db.refresh(post)
 
-    return {"message": "Post liked"}
+    return {"message": "post created"}
 
 # ================= FEED =================
 @app.get("/feed")
@@ -412,6 +390,47 @@ def feed(db: Session = Depends(get_db)):
         })
 
     return result
+
+
+@app.post("/posts/{post_id}/like")
+def like_post(
+    post_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if db.query(PostLike).filter(PostLike.post_id == post_id, PostLike.user_id == current_user.id).first():
+        raise HTTPException(status_code=400, detail="Already liked")
+
+    db.add(PostLike(id=str(uuid.uuid4()), post_id=post_id, user_id=current_user.id))
+    db.commit()
+
+    return {"message": "Post liked"}
+
+# ================= FEED =================
+# @app.get("/feed")
+# def feed(db: Session = Depends(get_db)):
+
+#     posts = db.query(Post).order_by(Post.created_at.desc()).all()
+
+#     result = []
+
+#     for p in posts:
+
+#         user = db.query(User).filter(User.id == p.author_id).first()
+
+#         result.append({
+#             "id": str(p.id),
+#             "username": user.username if user else "unknown",
+#             "content": p.content,
+
+#             # 🔥 IMPORTANT FIX
+#             "image": p.image,
+
+#             "created_at": p.created_at.isoformat()
+#         })
+
+#     return result
+
 
 @app.get("/chats")
 def get_chats(

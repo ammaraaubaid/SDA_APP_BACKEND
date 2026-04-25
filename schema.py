@@ -50,11 +50,19 @@ class TokenPair(BaseModel):
 
 # ── Posts ──────────────────────────────────────────────────
 class PostCreate(BaseModel):
-    content: Optional[str] = None
-    visibility: str = "public"
-    group_id: Optional[str] = None
-    media_urls: Optional[List[str]] = None
-    media_type: Optional[str] = "image"
+    content: str
+    image: Optional[str] = None
+
+
+class PostResponse(BaseModel):
+    id: str
+    username: str
+    content: str
+    image: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class PostOut(BaseModel):

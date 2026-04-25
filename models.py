@@ -1,7 +1,7 @@
 from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, UniqueConstraint, Boolean
 from sqlalchemy.sql import func
 from database import Base
-
+from datetime import datetime
 
 # ───────────────── USER ─────────────────
 class User(Base):
@@ -37,15 +37,13 @@ class Follow(Base):
 
 # ───────────────── POST ─────────────────
 class Post(Base):
-    __tablename__ = "posts"
+    _tablename_ = "posts"  
 
-    id = Column(String, primary_key=True)
-    author_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"))
-
-    content = Column(Text)
-
-    created_at = Column(DateTime, server_default=func.now())
-
+    id = Column(String, primary_key=True, index=True)
+    author_id = Column(String)
+    content = Column(String)
+    image = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 # ───────────────── POST IMAGE ─────────────────
 class PostImage(Base):
