@@ -326,70 +326,114 @@ def get_following(user_id: str, db: Session = Depends(get_db)):
 
 
 # ── POSTS ─────────────────────────────────────────────────
-#======CREATE POST =================
+
+@app.post("/posts")
+async def create_post(
+    content: str,
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    new_post = Post(id=str(uuid.uuid4()), author_id=current_user.id, content=content)
+    db.add(new_post)
+    db.commit()
+    db.refresh(new_post)
+
+    image_urls = []
+    for file in files:
+        if not file.content_type.startswith("image/"):
+            continue
+
+        ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+        filename = f"{uuid.uuid4()}.{ext}"
+        filepath = f"uploads/posts/{filename}"
+
+        with open(filepath, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        image = PostImage(id=str(uuid.uuid4()), post_id=new_post.id, image_url=f"/uploads/posts/{filename}")
+        db.add(image)
+        image_urls.append(image.image_url)
+
+    db.commit()
+
+    return {"message": "Post created", "post_id": new_post.id, "images": image_urls}
+
+
 @app.post("/post-with-image")
-def create_post(
+def create_post_with_image(
     author_id: str = Form(...),
     content: str = Form(...),
     file: UploadFile = File(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
 
-    print("AUTHOR:", author_id)
-    print("CONTENT:", content)
-    print("FILE:", file.filename if file else "NO FILE")
+    try:
+        image_url = None
 
-    image_url = None
+        # SAFE FILE CHECK
+        if file and file.filename:
+            filename = f"{uuid.uuid4()}_{file.filename}"
+            path = f"uploads/posts/{filename}"
 
-    # ================= SAVE IMAGE =================
-    if file and file.filename:
-        filename = f"{uuid.uuid4()}_{file.filename}"
-        path = f"uploads/{filename}"
+            with open(path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
 
-        with open(path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            image_url = f"/uploads/posts/{filename}"
 
-        image_url = f"/uploads/{filename}"
+        # IMPORTANT FIX HERE 👇
+        post = Post(
+            id=str(uuid.uuid4()),
+            author_id=author_id,
+            content=content,
+            created_at=datetime.utcnow(),
+        )
 
-    # ================= SAVE POST =================
-    post = Post(
-        id=str(uuid.uuid4()),
-        author_id=author_id,
-        content=content,
-        image=image_url,
-        created_at=datetime.utcnow()
-    )
+        db.add(post)
+        db.commit()
+        db.refresh(post)
 
-    db.add(post)
-    db.commit()
-    db.refresh(post)
+        return {
+            "message": "Post created",
+            "post_id": post.id,
+            "image": image_url
+        }
 
-    return {"message": "post created"}
+    except Exception as e:
+        print("ERROR:", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
-# ================= FEED =================
+
 @app.get("/feed")
 def feed(db: Session = Depends(get_db)):
-
     posts = db.query(Post).order_by(Post.created_at.desc()).all()
 
     result = []
 
     for p in posts:
-
         user = db.query(User).filter(User.id == p.author_id).first()
+        images = db.query(PostImage).filter(PostImage.post_id == p.id).all()
 
         result.append({
             "id": str(p.id),
             "username": user.username if user else "unknown",
+            "profile_pic": user.profile_pic if user else None,
             "content": p.content,
 
-            # 🔥 IMPORTANT FIX
-            "image": p.image,
+            # FIXED IMAGE
+            "image": images[0].image_url if images else None,
 
-            "created_at": p.created_at.isoformat()
+            "images": [
+                {"id": img.id, "image_url": img.image_url}
+                for img in images
+            ],
+
+            # FIXED DATE
+            "created_at": p.created_at.isoformat() if p.created_at else None,
         })
 
     return result
+
 
 
 @app.post("/posts/{post_id}/like")

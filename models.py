@@ -35,24 +35,23 @@ class Follow(Base):
     )
 
 
-# ───────────────── POST ─────────────────
 class Post(Base):
-    _tablename_ = "posts"  
-
-    id = Column(String, primary_key=True, index=True)
-    author_id = Column(String)
-    content = Column(String)
-    image = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-# ───────────────── POST IMAGE ─────────────────
-class PostImage(Base):
-    __tablename__ = "post_images"
-
+    _tablename_ = "posts"
     id = Column(String, primary_key=True)
-    post_id = Column(String, ForeignKey("posts.id", ondelete="CASCADE"))
+    author_id = Column(String, ForeignKey("users.id"))
+    content = Column(Text)
+    created_at = Column(DateTime, server_default=func.now())
+    
+    # Optional: Relationship to easily access images
+    # from sqlalchemy.orm import relationship
+    # images = relationship("PostImage", back_populates="post")
 
-    image_url = Column(String)
+class PostImage(Base):
+    _tablename_ = "post_images"
+    
+    id = Column(String, primary_key=True)
+    post_id = Column(String, ForeignKey("posts.id"))
+    image_url = Column(String)  # Example: "/uploads/posts/image123.jpg"
     created_at = Column(DateTime, server_default=func.now())
 
 
