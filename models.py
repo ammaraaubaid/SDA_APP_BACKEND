@@ -36,7 +36,7 @@ class Follow(Base):
 
 
 class Post(Base):
-    _tablename_ = "posts"
+    __tablename__ = "posts"
     id = Column(String, primary_key=True)
     author_id = Column(String, ForeignKey("users.id"))
     content = Column(Text)
@@ -47,7 +47,7 @@ class Post(Base):
     # images = relationship("PostImage", back_populates="post")
 
 class PostImage(Base):
-    _tablename_ = "post_images"
+    __tablename__ = "post_images"
     
     id = Column(String, primary_key=True)
     post_id = Column(String, ForeignKey("posts.id"))
