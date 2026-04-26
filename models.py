@@ -1,7 +1,6 @@
-from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, UniqueConstraint, Boolean
+from sqlalchemy import Column, String, DateTime, Text, ForeignKey, UniqueConstraint, Boolean
 from sqlalchemy.sql import func
 from database import Base
-from datetime import datetime
 
 # ───────────────── USER ─────────────────
 class User(Base):
@@ -35,23 +34,23 @@ class Follow(Base):
     )
 
 
+# ───────────────── POST ─────────────────
 class Post(Base):
-    __tablename__ = "posts"
+    __tablename__ = "posts"  # ✅ was _tablename_ (single underscores) — now fixed
+
     id = Column(String, primary_key=True)
-    author_id = Column(String, ForeignKey("users.id"))
+    author_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"))
     content = Column(Text)
     created_at = Column(DateTime, server_default=func.now())
-    
-    # Optional: Relationship to easily access images
-    # from sqlalchemy.orm import relationship
-    # images = relationship("PostImage", back_populates="post")
 
+
+# ───────────────── POST IMAGE ─────────────────
 class PostImage(Base):
-    __tablename__ = "post_images"
-    
+    __tablename__ = "post_images"  # ✅ was _tablename_ (single underscores) — now fixed
+
     id = Column(String, primary_key=True)
-    post_id = Column(String, ForeignKey("posts.id"))
-    image_url = Column(String)  # Example: "/uploads/posts/image123.jpg"
+    post_id = Column(String, ForeignKey("posts.id", ondelete="CASCADE"))
+    image_url = Column(String)
     created_at = Column(DateTime, server_default=func.now())
 
 

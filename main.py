@@ -23,12 +23,11 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    
     allow_origins=[
-    "http://localhost:8081",
-    "http://localhost:8000",
-    "https://sda-front-end-xhiu.vercel.app"
-],
+        "http://localhost:8081",
+        "http://localhost:8000",
+        "https://sda-front-end-xhiu.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -117,7 +116,6 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Database insertion failed")
 
     return {"message": "User created successfully"}
-
 
 
 @app.post("/login", response_model=TokenPair)
@@ -360,20 +358,34 @@ async def create_post(
     return {"message": "Post created", "post_id": new_post.id, "images": image_urls}
 
 
+# ✅ FIXED: now saves PostImage row so images appear in /users/{id}/posts
 @app.post("/post-with-image")
 def create_post_with_image(
-    author_id: str = Form(...),
     content: str = Form(...),
     file: UploadFile = File(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),  # ✅ now uses real auth, not raw author_id
 ):
-
     try:
-        image_url = None
+        # 1. Create the Post row first
+        post = Post(
+            id=str(uuid.uuid4()),
+            author_id=current_user.id,  # ✅ from token, not form
+            content=content,
+            created_at=datetime.utcnow(),
+        )
+        db.add(post)
+        db.commit()
+        db.refresh(post)
 
-        # SAFE FILE CHECK
+        # 2. If an image was uploaded, save file AND create PostImage row
+        image_url = None
         if file and file.filename:
-            filename = f"{uuid.uuid4()}_{file.filename}"
+            if not file.content_type.startswith("image/"):
+                raise HTTPException(status_code=400, detail="File must be an image")
+
+            ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+            filename = f"{uuid.uuid4()}.{ext}"
             path = f"uploads/posts/{filename}"
 
             with open(path, "wb") as buffer:
@@ -381,25 +393,25 @@ def create_post_with_image(
 
             image_url = f"/uploads/posts/{filename}"
 
-        # IMPORTANT FIX HERE 👇
-        post = Post(
-            id=str(uuid.uuid4()),
-            author_id=author_id,
-            content=content,
-            created_at=datetime.utcnow(),
-        )
-
-        db.add(post)
-        db.commit()
-        db.refresh(post)
+            # ✅ THIS WAS THE MISSING LINE — create PostImage row in DB
+            post_image = PostImage(
+                id=str(uuid.uuid4()),
+                post_id=post.id,
+                image_url=image_url,
+            )
+            db.add(post_image)
+            db.commit()
 
         return {
             "message": "Post created",
             "post_id": post.id,
-            "image": image_url
+            "image": image_url,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
+        db.rollback()
         print("ERROR:", str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -419,21 +431,15 @@ def feed(db: Session = Depends(get_db)):
             "username": user.username if user else "unknown",
             "profile_pic": user.profile_pic if user else None,
             "content": p.content,
-
-            # FIXED IMAGE
             "image": images[0].image_url if images else None,
-
             "images": [
                 {"id": img.id, "image_url": img.image_url}
                 for img in images
             ],
-
-            # FIXED DATE
             "created_at": p.created_at.isoformat() if p.created_at else None,
         })
 
     return result
-
 
 
 @app.post("/posts/{post_id}/like")
@@ -449,57 +455,6 @@ def like_post(
     db.commit()
 
     return {"message": "Post liked"}
-
-# ================= FEED =================
-# @app.get("/feed")
-# def feed(db: Session = Depends(get_db)):
-
-#     posts = db.query(Post).order_by(Post.created_at.desc()).all()
-
-#     result = []
-
-#     for p in posts:
-
-#         user = db.query(User).filter(User.id == p.author_id).first()
-
-#         result.append({
-#             "id": str(p.id),
-#             "username": user.username if user else "unknown",
-#             "content": p.content,
-
-#             # 🔥 IMPORTANT FIX
-#             "image": p.image,
-
-#             "created_at": p.created_at.isoformat()
-#         })
-
-#     return result
-
-
-@app.get("/chats")
-def get_chats(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    # Get users you follow
-    following = db.query(Follow).filter(
-        Follow.follower_id == current_user.id
-    ).all()
-
-    user_ids = [f.following_id for f in following]
-
-    users = db.query(User).filter(User.id.in_(user_ids)).all()
-
-    return [
-        {
-            "user_id": user.id,
-            "username": user.username,
-            "profile_pic": f"https://sda-app-backend.onrender.com{user.profile_pic}" if user.profile_pic else None,
-            "last_message": "Start chatting 👋",  # placeholder
-            "timestamp": None,
-        }
-        for user in users
-    ]
 
 
 @app.delete("/posts/{post_id}/like")
@@ -571,6 +526,7 @@ def get_comments(post_id: str, db: Session = Depends(get_db)):
         for c in comments
     ]
 
+
 @app.get("/search")
 def search_users(query: str, db: Session = Depends(get_db)):
     users = db.query(User).filter(
@@ -590,6 +546,7 @@ def search_users(query: str, db: Session = Depends(get_db)):
         for user in users
     ]
 
+
 @app.delete("/comments/{comment_id}")
 def delete_comment(
     comment_id: str,
@@ -607,3 +564,29 @@ def delete_comment(
     db.commit()
 
     return {"message": "Comment deleted"}
+
+
+# ── CHATS ─────────────────────────────────────────────────
+
+@app.get("/chats")
+def get_chats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    following = db.query(Follow).filter(
+        Follow.follower_id == current_user.id
+    ).all()
+
+    user_ids = [f.following_id for f in following]
+    users = db.query(User).filter(User.id.in_(user_ids)).all()
+
+    return [
+        {
+            "user_id": user.id,
+            "username": user.username,
+            "profile_pic": f"https://sda-app-backend.onrender.com{user.profile_pic}" if user.profile_pic else None,
+            "last_message": "Start chatting 👋",
+            "timestamp": None,
+        }
+        for user in users
+    ]
