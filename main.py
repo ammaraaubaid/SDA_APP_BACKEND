@@ -573,13 +573,26 @@ def get_chats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # IDs of people current user follows
     following = db.query(Follow).filter(
         Follow.follower_id == current_user.id
     ).all()
-
-    user_ids = [f.following_id for f in following]
-    users = db.query(User).filter(User.id.in_(user_ids)).all()
-
+    following_ids = set(f.following_id for f in following)
+ 
+    # IDs of people who follow current user back
+    followers = db.query(Follow).filter(
+        Follow.following_id == current_user.id
+    ).all()
+    follower_ids = set(f.follower_id for f in followers)
+ 
+    # Only mutual: in both sets
+    mutual_ids = following_ids & follower_ids
+ 
+    if not mutual_ids:
+        return []
+ 
+    users = db.query(User).filter(User.id.in_(mutual_ids)).all()
+ 
     return [
         {
             "user_id": user.id,
