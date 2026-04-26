@@ -25,8 +25,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:8081",
+        "http://127.0.0.1:8081",  # ✅ add this
         "http://localhost:8000",
         "https://sda-front-end-xhiu.vercel.app"
+        
     ],
     allow_credentials=True,
     allow_methods=["*"],
