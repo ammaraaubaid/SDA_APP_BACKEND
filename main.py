@@ -605,3 +605,58 @@ def get_chats(
         }
         for user in users
     ]
+@app.delete("/posts/{post_id}")
+def delete_post(
+    post_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    db.query(PostImage).filter(PostImage.post_id == post_id).delete()
+    db.query(PostLike).filter(PostLike.post_id == post_id).delete()
+    db.query(Comment).filter(Comment.post_id == post_id).delete()
+    db.delete(post)
+    db.commit()
+    return {"message": "Post deleted"}
+
+
+@app.patch("/posts/{post_id}")
+async def edit_post(
+    post_id: str,
+    content: str = Form(...),
+    file: UploadFile = File(None),
+    remove_image: bool = Form(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    post.content = content
+
+    if remove_image:
+        db.query(PostImage).filter(PostImage.post_id == post_id).delete()
+
+    if file and file.filename:
+        db.query(PostImage).filter(PostImage.post_id == post_id).delete()
+        ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+        filename = f"{uuid.uuid4()}.{ext}"
+        path = f"uploads/posts/{filename}"
+        with open(path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        db.add(PostImage(
+            id=str(uuid.uuid4()),
+            post_id=post_id,
+            image_url=f"/uploads/posts/{filename}"
+        ))
+
+    db.commit()
+    return {"message": "Post updated"}
