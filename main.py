@@ -12,8 +12,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 
+from models import Conversation, ConversationParticipant
+
+from models import (
+    User, Follow, Post, PostImage, PostLike, Comment,
+    Conversation, ConversationParticipant, Message
+)
+
 from database import get_db, engine, Base
-from models import User, Follow, Post, PostImage, PostLike, Comment
+# from models import User, Follow, Post, PostImage, PostLike, Comment, Conversation, Message, ConversationParticipant
 from schema import TokenPair, UserCreate, UserUpdate, CommentCreate
 
 
@@ -483,50 +490,50 @@ def get_likes(post_id: str, db: Session = Depends(get_db)):
 
 # ── COMMENTS ─────────────────────────────────────────────
 
-@app.post("/posts/{post_id}/comment")
-def create_comment(
-    post_id: str,
-    comment: CommentCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    new_comment = Comment(
-        id=str(uuid.uuid4()),
-        post_id=post_id,
-        author_id=current_user.id,
-        content=comment.content,
-        parent_id=comment.parent_id,
-    )
-    db.add(new_comment)
-    db.commit()
-    db.refresh(new_comment)
+# @app.post("/posts/{post_id}/comment")
+# def create_comment(
+#     post_id: str,
+#     comment: CommentCreate,
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_user),
+# ):
+#     new_comment = Comment(
+#         id=str(uuid.uuid4()),
+#         post_id=post_id,
+#         author_id=current_user.id,
+#         content=comment.content,
+#         parent_id=comment.parent_id,
+#     )
+#     db.add(new_comment)
+#     db.commit()
+#     db.refresh(new_comment)
 
-    return {
-        "message": "Comment added",
-        "comment": {
-            "id": new_comment.id,
-            "content": new_comment.content,
-            "post_id": new_comment.post_id,
-            "author_id": new_comment.author_id,
-            "parent_id": new_comment.parent_id,
-            "created_at": new_comment.created_at,
-        },
-    }
+#     return {
+#         "message": "Comment added",
+#         "comment": {
+#             "id": new_comment.id,
+#             "content": new_comment.content,
+#             "post_id": new_comment.post_id,
+#             "author_id": new_comment.author_id,
+#             "parent_id": new_comment.parent_id,
+#             "created_at": new_comment.created_at,
+#         },
+#     }
 
 
-@app.get("/posts/{post_id}/comments")
-def get_comments(post_id: str, db: Session = Depends(get_db)):
-    comments = db.query(Comment).filter(Comment.post_id == post_id).all()
-    return [
-        {
-            "id": c.id,
-            "content": c.content,
-            "author_id": c.author_id,
-            "parent_id": c.parent_id,
-            "created_at": c.created_at,
-        }
-        for c in comments
-    ]
+# @app.get("/posts/{post_id}/comments")
+# def get_comments(post_id: str, db: Session = Depends(get_db)):
+#     comments = db.query(Comment).filter(Comment.post_id == post_id).all()
+#     return [
+#         {
+#             "id": c.id,
+#             "content": c.content,
+#             "author_id": c.author_id,
+#             "parent_id": c.parent_id,
+#             "created_at": c.created_at,
+#         }
+#         for c in comments
+#     ]
 
 
 @app.get("/search")
@@ -660,3 +667,197 @@ async def edit_post(
 
     db.commit()
     return {"message": "Post updated"}
+
+
+from fastapi import WebSocket, WebSocketDisconnect
+
+# ── GET messages for a conversation ──────────────────────
+@app.get("/messages/{conversation_id}")
+def get_messages(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # verify user is a participant
+    participant = db.query(ConversationParticipant).filter(
+        ConversationParticipant.conversation_id == conversation_id,
+        ConversationParticipant.user_id == current_user.id,
+    ).first()
+
+    if not participant:
+        raise HTTPException(status_code=403, detail="Not a participant")
+
+    messages = db.query(Message).filter(
+        Message.conversation_id == conversation_id
+    ).order_by(Message.created_at.asc()).all()
+
+    return [
+        {
+            "id": m.id,
+            "content": m.content,
+            "sender_id": m.sender_id,
+            "created_at": m.created_at,
+        }
+        for m in messages
+    ]
+
+
+# ── POST send a message ───────────────────────────────────
+@app.post("/messages/{conversation_id}")
+def send_message(
+    conversation_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # verify user is a participant
+    participant = db.query(ConversationParticipant).filter(
+        ConversationParticipant.conversation_id == conversation_id,
+        ConversationParticipant.user_id == current_user.id,
+    ).first()
+
+    if not participant:
+        raise HTTPException(status_code=403, detail="Not a participant")
+
+    content = body.get("content", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    msg = Message(
+        id=str(uuid.uuid4()),
+        conversation_id=conversation_id,
+        sender_id=current_user.id,
+        content=content,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    return {
+        "id": msg.id,
+        "content": msg.content,
+        "sender_id": msg.sender_id,
+        "created_at": msg.created_at,
+    }
+
+@app.get("/conversations/{conversation_id}")
+def get_conversation_messages(conversation_id: str, db: Session = Depends(get_db)):
+    messages = db.query(Message).filter(
+        Message.conversation_id == conversation_id
+    ).order_by(Message.created_at.asc()).all()
+
+    return [
+        {
+            "id": m.id,
+            "content": m.content,
+            "sender_id": m.sender_id,
+            "created_at": m.created_at,
+        }
+        for m in messages
+    ]
+
+# @app.post("/conversations/{conversation_id}")
+# def get_conversation_messages(
+#     conversation_id: str,
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_user),
+# ):
+#     messages = db.query(Message).filter(
+#         Message.conversation_id == conversation_id
+#     ).order_by(Message.created_at.asc()).all()
+
+#     return [
+#         {
+#             "id": m.id,
+#             "content": m.content,
+#             "sender_id": m.sender_id,
+#             "created_at": m.created_at,
+#         }
+#         for m in messages
+#     ]
+
+@app.post("/conversations")
+def create_conversation(
+    user_id: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # check if conversation already exists
+    existing = db.query(ConversationParticipant).filter(
+        ConversationParticipant.user_id.in_([current_user.id, user_id])
+    ).all()
+
+    # simple version: always create new
+    conversation = Conversation(id=str(uuid.uuid4()))
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+
+    # add both users
+    db.add_all([
+        ConversationParticipant(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation.id,
+            user_id=current_user.id
+        ),
+        ConversationParticipant(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation.id,
+            user_id=user_id
+        )
+    ])
+    db.commit()
+
+    return {"conversation_id": conversation.id}
+
+
+@app.post("/conversations/{other_user_id}")
+def create_or_get_conversation(
+    other_user_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.id == other_user_id:
+        raise HTTPException(status_code=400, detail="Cannot create conversation with yourself")
+
+    # Step 1: check if conversation already exists between both users
+    existing_conversation = (
+        db.query(Conversation)
+        .join(ConversationParticipant)
+        .filter(ConversationParticipant.user_id == current_user.id)
+        .all()
+    )
+
+    for convo in existing_conversation:
+        participants = db.query(ConversationParticipant).filter(
+            ConversationParticipant.conversation_id == convo.id
+        ).all()
+
+        participant_ids = {p.user_id for p in participants}
+
+        if participant_ids == {current_user.id, other_user_id}:
+            return {"conversation_id": convo.id}
+
+    # Step 2: create new conversation
+    conversation = Conversation(id=str(uuid.uuid4()))
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+
+    # Step 3: add participants
+    db.add_all([
+        ConversationParticipant(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation.id,
+            user_id=current_user.id
+        ),
+        ConversationParticipant(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation.id,
+            user_id=other_user_id
+        )
+    ])
+
+    db.commit()
+
+    return {"conversation_id": conversation.id}
