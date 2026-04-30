@@ -36,7 +36,7 @@ class Follow(Base):
 
 # ───────────────── POST ─────────────────
 class Post(Base):
-    __tablename__ = "posts"  # ✅ was _tablename_ (single underscores) — now fixed
+    __tablename__ = "posts"  
 
     id = Column(String, primary_key=True)
     author_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"))
@@ -46,7 +46,7 @@ class Post(Base):
 
 # ───────────────── POST IMAGE ─────────────────
 class PostImage(Base):
-    __tablename__ = "post_images"  # ✅ was _tablename_ (single underscores) — now fixed
+    __tablename__ = "post_images"  
 
     id = Column(String, primary_key=True)
     post_id = Column(String, ForeignKey("posts.id", ondelete="CASCADE"))
@@ -77,46 +77,46 @@ class Comment(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
-# ───────────────── NOTIFICATION ─────────────────
-class Notification(Base):
-    __tablename__ = "notifications"
+# # ───────────────── NOTIFICATION ─────────────────
+# class Notification(Base):
+#     __tablename__ = "notifications"
 
-    id = Column(String, primary_key=True)
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"))
+#     id = Column(String, primary_key=True)
+#     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"))
 
-    type = Column(String)
-    entity_type = Column(String, nullable=True)
-    entity_id = Column(String, nullable=True)
+#     type = Column(String)
+#     entity_type = Column(String, nullable=True)
+#     entity_id = Column(String, nullable=True)
 
-    is_read = Column(Boolean, default=False)
+#     is_read = Column(Boolean, default=False)
 
-    created_at = Column(DateTime, server_default=func.now())
-
-
-# ───────────────── GROUP ─────────────────
-class Group(Base):
-    __tablename__ = "groups"
-
-    id = Column(String, primary_key=True)
-    name = Column(String)
-    description = Column(Text)
-
-    is_private = Column(Boolean, default=False)
-
-    created_by = Column(String, ForeignKey("users.id", ondelete="CASCADE"))
-    university = Column(String, nullable=True)
-
-    created_at = Column(DateTime, server_default=func.now())
+#     created_at = Column(DateTime, server_default=func.now())
 
 
-class GroupMember(Base):
-    __tablename__ = "group_members"
+# # ───────────────── GROUP ─────────────────
+# class Group(Base):
+#     __tablename__ = "groups"
 
-    id = Column(String, primary_key=True)
-    group_id = Column(String, ForeignKey("groups.id", ondelete="CASCADE"))
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"))
+#     id = Column(String, primary_key=True)
+#     name = Column(String)
+#     description = Column(Text)
 
-    role = Column(String, default="member")
+#     is_private = Column(Boolean, default=False)
+
+#     created_by = Column(String, ForeignKey("users.id", ondelete="CASCADE"))
+#     university = Column(String, nullable=True)
+
+#     created_at = Column(DateTime, server_default=func.now())
+
+
+# class GroupMember(Base):
+#     __tablename__ = "group_members"
+
+#     id = Column(String, primary_key=True)
+#     group_id = Column(String, ForeignKey("groups.id", ondelete="CASCADE"))
+#     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"))
+
+#     role = Column(String, default="member")
 
 
 # ───────────────── CHAT ─────────────────
@@ -144,3 +144,4 @@ class Message(Base):
 
     content = Column(Text)
     created_at = Column(DateTime, server_default=func.now())
+
