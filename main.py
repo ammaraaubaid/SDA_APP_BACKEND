@@ -1,7 +1,7 @@
 import os
 import uuid
 import shutil
-
+from schema import MessageUpdate
 import bcrypt
 from datetime import datetime, timedelta
 from sqlalchemy import or_
@@ -24,19 +24,61 @@ from database import get_db, engine, Base
 from schema import TokenPair, UserCreate, UserUpdate, CommentCreate
 
 
-# ── App & Middleware ──────────────────────────────────────
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+from fastapi.responses import HTMLResponse
+
+import re
+import socket
+import smtplib
+import dns.resolver
+
+from sqlalchemy import text
+
+
+
+
+# with engine.connect() as conn:
+#     conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE;"))
+#     conn.commit()
+    
+    
+NU_EMAIL_REGEX = re.compile(r'^l\d{6}@lhr\.nu\.edu\.pk$', re.IGNORECASE)
+
+def validate_nu_email_format(email: str) -> None:
+    if not NU_EMAIL_REGEX.match(email):
+        raise HTTPException(
+            status_code=400,
+            detail="Email must be in the format lXXXXXX@lhr.nu.edu.pk (e.g. l123456@lhr.nu.edu.pk)"
+        )
+
+def create_verification_token(email: str) -> str:
+    expire = datetime.utcnow() + timedelta(hours=24)
+    return jwt.encode({"sub": email, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+
+def decode_verification_token(token: str) -> str:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload.get("sub")   # returns the email
+    except JWTError:
+        return None
+
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8081",
-        "http://127.0.0.1:8081",  # ✅ add this
-        "http://localhost:8000",
-        "https://sda-front-end-xhiu.vercel.app"
+    allow_origins=["*"],
+    # allow_origins=[
+    #     "http://localhost:8081",
+    #     "http://127.0.0.1:8081",  # ✅ add this
+    #     "http://127.0.0.1:8082",
+    #     "http://localhost:8000",
+    #     "http://localhost:8082",
+    #     "https://sda-front-end-xhiu.vercel.app"
         
-    ],
+    # ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,6 +91,18 @@ os.makedirs("uploads/posts", exist_ok=True)
 
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
+# mail_config = ConnectionConfig(
+#     MAIL_USERNAME="your_gmail@gmail.com",
+#     MAIL_PASSWORD="your_app_password",   # Gmail App Password, NOT your real password
+#     MAIL_FROM="your_gmail@gmail.com",
+#     MAIL_PORT=587,
+#     MAIL_SERVER="smtp.gmail.com",
+#     MAIL_STARTTLS=True,
+#     MAIL_SSL_TLS=False,
+#     USE_CREDENTIALS=True,
+# )
+
+# fastmail = FastMail(mail_config)
 # ── DB Init ───────────────────────────────────────────────
 
 Base.metadata.create_all(bind=engine)
@@ -99,11 +153,15 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 
 # ── AUTH ──────────────────────────────────────────────────
-
 @app.post("/signup")
 def signup(user: UserCreate, db: Session = Depends(get_db)):
+    validate_nu_email_format(user.email)
+
     if db.query(User).filter(User.username == user.username).first():
-        raise HTTPException(status_code=400, detail="User already exists")
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    if db.query(User).filter(User.email == user.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
 
     new_user = User(
         id=str(uuid.uuid4()),
@@ -127,6 +185,27 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
     return {"message": "User created successfully"}
 
 
+
+# @app.get("/verify-email")
+# def verify_email(token: str, db: Session = Depends(get_db)):
+#     email = decode_verification_token(token)
+
+#     if not email:
+#         raise HTTPException(status_code=400, detail="Invalid or expired verification link")
+
+#     user = db.query(User).filter(User.email == email).first()
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+
+#     if user.verified:
+#         return HTMLResponse("<h2>Email already verified. You can log in!</h2>")
+
+#     user.verified = True
+#     db.commit()
+
+#     return HTMLResponse("<h2>Email verified successfully! You can now log in to NU Connect.</h2>")
+
+
 @app.post("/login", response_model=TokenPair)
 def login(
     username: str = Form(...),
@@ -134,21 +213,25 @@ def login(
     db: Session = Depends(get_db),
 ):
     db_user = db.query(User).filter(User.username == username).first()
-
     if not db_user or not verify_password(password, db_user.password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     access_token = create_access_token(data={"sub": db_user.id})
     refresh_token = create_access_token(data={"sub": db_user.id}, expires_delta=timedelta(days=7))
 
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
-
-
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user_id": db_user.id,  
+    }  
+    
 @app.post("/refresh", response_model=TokenPair)
 def refresh_token(refresh_token: str, db: Session = Depends(get_db)):
     try:
         payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
+        
         if user_id is None:
             raise HTTPException(status_code=401, detail="Invalid refresh token")
     except JWTError:
@@ -606,7 +689,7 @@ def get_chats(
         {
             "user_id": user.id,
             "username": user.username,
-            "profile_pic": f"https://sda-app-backend.onrender.com{user.profile_pic}" if user.profile_pic else None,
+            "profile_pic": f"http://127.0.0.1:8000{user.profile_pic}" if user.profile_pic else None,
             "last_message": "Start chatting 👋",
             "timestamp": None,
         }
@@ -756,26 +839,6 @@ def get_conversation_messages(conversation_id: str, db: Session = Depends(get_db
         for m in messages
     ]
 
-# @app.post("/conversations/{conversation_id}")
-# def get_conversation_messages(
-#     conversation_id: str,
-#     db: Session = Depends(get_db),
-#     current_user: User = Depends(get_current_user),
-# ):
-#     messages = db.query(Message).filter(
-#         Message.conversation_id == conversation_id
-#     ).order_by(Message.created_at.asc()).all()
-
-#     return [
-#         {
-#             "id": m.id,
-#             "content": m.content,
-#             "sender_id": m.sender_id,
-#             "created_at": m.created_at,
-#         }
-#         for m in messages
-#     ]
-
 @app.post("/conversations")
 def create_conversation(
     user_id: str = Form(...),
@@ -861,3 +924,107 @@ def create_or_get_conversation(
     db.commit()
 
     return {"conversation_id": conversation.id}
+
+
+
+@app.delete("/messages/{message_id}")
+def delete_message(
+    message_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    # 1. Find message
+    message = db.query(Message).filter(Message.id == message_id).first()
+
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # 2. Check ownership (IMPORTANT)
+    if str(message.sender_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Not allowed to delete this message")
+
+    # 3. Delete message
+    db.delete(message)
+    db.commit()
+
+    return {"message": "Message deleted successfully"}
+
+@app.put("/messages/{message_id}")
+def update_message(message_id: int, body: MessageUpdate, db: Session = Depends(get_db)):
+    message = db.query(Message).filter(Message.id == message_id).first()
+
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    message.content = body.content
+    message.edited = True  # optional
+
+    db.commit()
+    db.refresh(message)
+
+    return message
+ 
+@app.delete("/messages/{message_id}")
+def delete_message(message_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+
+    msg = db.query(Message).filter(Message.id == message_id).first()
+
+    if not msg:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if msg.sender_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    db.delete(msg)
+    db.commit()
+
+    return {"message": "deleted"}
+
+
+@app.delete("/users/{user_id}")
+def delete_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Only allow deleting your own account
+    if current_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Not allowed to delete another user's account")
+ 
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+ 
+    # Delete all related data first (avoid FK constraint errors)
+    db.query(PostLike).filter(PostLike.user_id == user_id).delete()
+    db.query(Comment).filter(Comment.author_id == user_id).delete()
+ 
+    # Delete user's post images and posts
+    user_posts = db.query(Post).filter(Post.author_id == user_id).all()
+    for post in user_posts:
+        db.query(PostImage).filter(PostImage.post_id == post.id).delete()
+        db.query(PostLike).filter(PostLike.post_id == post.id).delete()
+        db.query(Comment).filter(Comment.post_id == post.id).delete()
+    db.query(Post).filter(Post.author_id == user_id).delete()
+ 
+    # Delete follow relationships
+    db.query(Follow).filter(
+        (Follow.follower_id == user_id) | (Follow.following_id == user_id)
+    ).delete()
+ 
+    # Delete conversation participations and messages
+    participations = db.query(ConversationParticipant).filter(
+        ConversationParticipant.user_id == user_id
+    ).all()
+    for p in participations:
+        db.query(Message).filter(Message.conversation_id == p.conversation_id).delete()
+        db.query(ConversationParticipant).filter(
+            ConversationParticipant.conversation_id == p.conversation_id
+        ).delete()
+        db.query(Conversation).filter(Conversation.id == p.conversation_id).delete()
+ 
+    # Finally delete the user
+    db.delete(user)
+    db.commit()
+ 
+    return {"message": "Account deleted successfully"}
