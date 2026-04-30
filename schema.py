@@ -89,22 +89,22 @@ class CommentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ── Groups ─────────────────────────────────────────────────
-class GroupCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-    is_private: bool = False
-    university: Optional[str] = None
+# # ── Groups ─────────────────────────────────────────────────
+# class GroupCreate(BaseModel):
+#     name: str
+#     description: Optional[str] = None
+#     is_private: bool = False
+#     university: Optional[str] = None
 
 
-class GroupOut(BaseModel):
-    id: str
-    name: str
-    description: Optional[str] = None
-    is_private: bool
-    created_by: str
-    created_at: datetime
-    model_config = {"from_attributes": True}
+# class GroupOut(BaseModel):
+#     id: str
+#     name: str
+#     description: Optional[str] = None
+#     is_private: bool
+#     created_by: str
+#     created_at: datetime
+#     model_config = {"from_attributes": True}
 
 
 # ── Messages ───────────────────────────────────────────────
@@ -127,12 +127,19 @@ class MessageOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ── Notifications ──────────────────────────────────────────
-class NotificationOut(BaseModel):
-    id: str
-    type: str
-    entity_type: Optional[str] = None
-    entity_id: Optional[str] = None
-    is_read: bool
-    created_at: datetime
-    model_config = {"from_attributes": True}
+class MessageUpdate(BaseModel):
+    content: str
+
+# # ── Notifications ──────────────────────────────────────────
+# class NotificationOut(BaseModel):
+#     id: str
+#     type: str
+#     entity_type: Optional[str] = None
+#     entity_id: Optional[str] = None
+#     is_read: bool
+#     created_at: datetime
+#     model_config = {"from_attributes": True}
+    
+
+# # schemas.py
+# from pydantic import BaseModel
