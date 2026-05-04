@@ -1069,6 +1069,11 @@ def reset_password(
 
     return {"message": "Password reset successful"}
 
+def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.username != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
 
 @app.get("/admin/users")
 def admin_get_all_users(
@@ -1122,10 +1127,6 @@ def admin_delete_post(
     return {"message": f"Post {post_id} deleted by admin"}
 
 
-def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.username != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
 
 @app.delete("/admin/users/{user_id}")
 def admin_delete_user(
