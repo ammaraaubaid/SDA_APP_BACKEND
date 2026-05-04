@@ -1058,3 +1058,97 @@ def reset_password(
     db.commit()
 
     return {"message": "Password reset successful"}
+
+
+@app.get("/admin/users")
+def admin_get_all_users(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    users = db.query(User).all()
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "full_name": u.full_name,
+            "email": u.email,
+            "profile_pic": u.profile_pic,
+        }
+        for u in users
+    ]
+
+
+@app.get("/admin/posts")
+def admin_get_all_posts(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    posts = db.query(Post).order_by(Post.created_at.desc()).all()
+    return [
+        {
+            "id": p.id,
+            "author_id": p.author_id,
+            "content": p.content,
+            "created_at": p.created_at,
+        }
+        for p in posts
+    ]
+
+
+@app.delete("/admin/posts/{post_id}")
+def admin_delete_post(
+    post_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    db.query(PostImage).filter(PostImage.post_id == post_id).delete()
+    db.query(PostLike).filter(PostLike.post_id == post_id).delete()
+    db.query(Comment).filter(Comment.post_id == post_id).delete()
+    db.delete(post)
+    db.commit()
+    return {"message": f"Post {post_id} deleted by admin"}
+
+
+def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.username != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+@app.delete("/admin/users/{user_id}")
+def admin_delete_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.username == "admin":
+        raise HTTPException(status_code=400, detail="Cannot delete admin account")
+    db.query(PostLike).filter(PostLike.user_id == user_id).delete()
+    db.query(Comment).filter(Comment.author_id == user_id).delete()
+    user_posts = db.query(Post).filter(Post.author_id == user_id).all()
+    for post in user_posts:
+        db.query(PostImage).filter(PostImage.post_id == post.id).delete()
+        db.query(PostLike).filter(PostLike.post_id == post.id).delete()
+        db.query(Comment).filter(Comment.post_id == post.id).delete()
+    db.query(Post).filter(Post.author_id == user_id).delete()
+    db.query(Follow).filter(
+        (Follow.follower_id == user_id) | (Follow.following_id == user_id)
+    ).delete()
+    participations = db.query(ConversationParticipant).filter(
+        ConversationParticipant.user_id == user_id
+    ).all()
+    for p in participations:
+        db.query(Message).filter(Message.conversation_id == p.conversation_id).delete()
+        db.query(ConversationParticipant).filter(
+            ConversationParticipant.conversation_id == p.conversation_id
+        ).delete()
+        db.query(Conversation).filter(Conversation.id == p.conversation_id).delete()
+    db.delete(user)
+    db.commit()
+    return {"message": f"User {user_id} deleted by admin"}
+
