@@ -69,21 +69,20 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=["*"],
-    allow_origins=[
-        "http://localhost:8081",
-        "http://127.0.0.1:8081",  # ✅ add this
-        "http://127.0.0.1:8082",
-        "http://localhost:8000",
-        "http://localhost:8082",
-        "https://sda-front-end-xhiu.vercel.app"
+    allow_origins=["*"],
+    # allow_origins=[
+    #     "http://localhost:8081",
+    #     "http://127.0.0.1:8081",  # ✅ add this
+    #     "http://127.0.0.1:8082",
+    #     "http://localhost:8000",
+    #     "http://localhost:8082",
+    #     "https://sda-front-end-xhiu.vercel.app"
         
-    ],
+    # ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ── Static Files & Upload Dirs ────────────────────────────
 
@@ -574,51 +573,50 @@ def get_likes(post_id: str, db: Session = Depends(get_db)):
 
 # ── COMMENTS ─────────────────────────────────────────────
 
-# @app.post("/posts/{post_id}/comment")
-# def create_comment(
-#     post_id: str,
-#     comment: CommentCreate,
-#     db: Session = Depends(get_db),
-#     current_user: User = Depends(get_current_user),
-# ):
-#     new_comment = Comment(
-#         id=str(uuid.uuid4()),
-#         post_id=post_id,
-#         author_id=current_user.id,
-#         content=comment.content,
-#         parent_id=comment.parent_id,
-#     )
-#     db.add(new_comment)
-#     db.commit()
-#     db.refresh(new_comment)
+# UNCOMMENT THIS:
+@app.post("/posts/{post_id}/comment")
+def create_comment(
+    post_id: str,
+    comment: CommentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    new_comment = Comment(
+        id=str(uuid.uuid4()),
+        post_id=post_id,
+        author_id=current_user.id,
+        content=comment.content,
+        parent_id=comment.parent_id,
+    )
+    db.add(new_comment)
+    db.commit()
+    db.refresh(new_comment)
+    return {
+        "message": "Comment added",
+        "comment": {
+            "id": new_comment.id,
+            "content": new_comment.content,
+            "post_id": new_comment.post_id,
+            "author_id": new_comment.author_id,
+            "parent_id": new_comment.parent_id,
+            "created_at": new_comment.created_at,
+        },
+    }
 
-#     return {
-#         "message": "Comment added",
-#         "comment": {
-#             "id": new_comment.id,
-#             "content": new_comment.content,
-#             "post_id": new_comment.post_id,
-#             "author_id": new_comment.author_id,
-#             "parent_id": new_comment.parent_id,
-#             "created_at": new_comment.created_at,
-#         },
-#     }
-
-
-# @app.get("/posts/{post_id}/comments")
-# def get_comments(post_id: str, db: Session = Depends(get_db)):
-#     comments = db.query(Comment).filter(Comment.post_id == post_id).all()
-#     return [
-#         {
-#             "id": c.id,
-#             "content": c.content,
-#             "author_id": c.author_id,
-#             "parent_id": c.parent_id,
-#             "created_at": c.created_at,
-#         }
-#         for c in comments
-#     ]
-
+# UNCOMMENT THIS:
+@app.get("/posts/{post_id}/comments")
+def get_comments(post_id: str, db: Session = Depends(get_db)):
+    comments = db.query(Comment).filter(Comment.post_id == post_id).all()
+    return [
+        {
+            "id": c.id,
+            "content": c.content,
+            "author_id": c.author_id,
+            "parent_id": c.parent_id,
+            "created_at": c.created_at,
+        }
+        for c in comments
+    ]
 
 @app.get("/search")
 def search_users(query: str, db: Session = Depends(get_db)):
@@ -1029,3 +1027,34 @@ def delete_user(
     db.commit()
  
     return {"message": "Account deleted successfully"}
+@app.post("/forgot-password")
+def forgot_password(email: str = Form(...), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found with this email")
+
+    token = create_verification_token(email)  # reuse your existing function
+    reset_link = f"http://127.0.0.1:8000/reset-password?token={token}"
+
+    # For now just return the link (until you configure email sending)
+    return {"message": "Password reset link generated", "reset_link": reset_link}
+
+
+@app.post("/reset-password")
+def reset_password(
+    token: str = Form(...),
+    new_password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    email = decode_verification_token(token)  # reuse your existing function
+    if not email:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.password = hash_password(new_password)
+    db.commit()
+
+    return {"message": "Password reset successful"}
