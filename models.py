@@ -46,6 +46,7 @@ class Post(Base):
 
 # ───────────────── POST IMAGE ─────────────────
 class PostImage(Base):
+    
     __tablename__ = "post_images"  
 
     id = Column(String, primary_key=True)
