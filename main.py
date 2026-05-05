@@ -734,7 +734,7 @@ def get_chats(
         {
             "user_id": user.id,
             "username": user.username,
-            "profile_pic": f"http://127.0.0.1:8000{user.profile_pic}" if user.profile_pic else None,
+            "profile_pic": f"https://sda-app-backend.onrender.com{user.profile_pic}" if user.profile_pic else None,
             "last_message": "Start chatting 👋",
             "timestamp": None,
         }
