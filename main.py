@@ -22,6 +22,8 @@ from models import (
 )
 from database import get_db, engine, Base
 from schema import TokenPair, UserCreate, UserUpdate, CommentCreate, MessageUpdate
+import resend
+resend.api_key = "re_18yhS8Nh_J3rHc9KhG931dk3EoFbdEbj5"
 
 # ── DB Init ───────────────────────────────────────────────
 Base.metadata.create_all(bind=engine)
@@ -173,7 +175,12 @@ async def signup(user: UserCreate, db: Session = Depends(get_db)):
 
     try:
         print(f"[EMAIL] Attempting to send to: {new_user.email}")
-        await fastmail.send_message(message)
+        resend.Emails.send({
+    "from": "NU Connect <onboarding@resend.dev>",
+    "to": new_user.email,
+    "subject": "Verify your NU Connect account",
+    "html": html_body,
+})
         print(f"[EMAIL] ✅ Sent successfully to: {new_user.email}")
     except Exception as e:
         print(f"[EMAIL] ❌ FAILED: {type(e).__name__}: {e}")
