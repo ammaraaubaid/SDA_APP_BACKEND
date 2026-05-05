@@ -1106,7 +1106,7 @@ def reset_password(
     return {"message": "Password reset successful"}
 
 def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.username != "admin":
+    if current_user.email != "l240944@lhr.nu.edu.pk":
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
