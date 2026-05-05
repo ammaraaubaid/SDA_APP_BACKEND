@@ -11,10 +11,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 from fastapi.responses import HTMLResponse
 import re
-from sqlalchemy import text
+import resend
 
 from models import (
     User, Follow, Post, PostImage, PostLike, Comment,
@@ -22,8 +21,6 @@ from models import (
 )
 from database import get_db, engine, Base
 from schema import TokenPair, UserCreate, UserUpdate, CommentCreate, MessageUpdate
-import resend
-resend.api_key = "re_18yhS8Nh_J3rHc9KhG931dk3EoFbdEbj5"
 
 # ── DB Init ───────────────────────────────────────────────
 Base.metadata.create_all(bind=engine)
@@ -32,21 +29,10 @@ Base.metadata.create_all(bind=engine)
 SECRET_KEY = "fbab35ec4019c91b7d06cd19a0e7290ca81d7b6bed0ea43e1fdcfa7128e7c1f2"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
-BASE_URL = "https://sda-app-backend.onrender.com"  # ← your backend URL
+BASE_URL = "https://sda-app-backend.onrender.com"
 
-# ── Email Config ──────────────────────────────────────────
-mail_config = ConnectionConfig(
-    MAIL_USERNAME="unifisocialnetworkingapp@gmail.com",        # ← your Gmail
-    MAIL_PASSWORD="btla ldzd gsef mpcp",         # ← Gmail App Password
-    MAIL_FROM="unifisocialnetworkingapp@gmail.com",            # ← same Gmail
-    MAIL_FROM_NAME="NU Connect",
-    MAIL_PORT=465,
-    MAIL_SERVER="smtp.gmail.com",
-    MAIL_STARTTLS=True,
-    MAIL_SSL_TLS=False,
-    USE_CREDENTIALS=True,
-)
-fastmail = FastMail(mail_config)
+# ── Resend Email Config ───────────────────────────────────
+resend.api_key = "re_18yhS8Nh_J3rHc9KhG931dk3EoFbdEbj5"
 
 app = FastAPI()
 
@@ -136,7 +122,7 @@ async def signup(user: UserCreate, db: Session = Depends(get_db)):
         university=user.university,
         department=user.department,
         bio=user.bio,
-        verified=False,          # ← starts unverified
+        verified=False,
     )
 
     try:
@@ -147,7 +133,7 @@ async def signup(user: UserCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail="Database insertion failed")
 
-    # Send verification email
+    # Send verification email via Resend
     token = create_verification_token(new_user.email)
     verify_link = f"{BASE_URL}/verify-email?token={token}"
 
@@ -166,21 +152,14 @@ async def signup(user: UserCreate, db: Session = Depends(get_db)):
     </div>
     """
 
-    message = MessageSchema(
-        subject="Verify your NU Connect account",
-        recipients=[new_user.email],
-        body=html_body,
-        subtype=MessageType.html,
-    )
-
     try:
-        print(f"[EMAIL] Attempting to send to: {new_user.email}")
+        print(f"[EMAIL] Sending verification email to: {new_user.email}")
         resend.Emails.send({
-    "from": "NU Connect <onboarding@resend.dev>",
-    "to": new_user.email,
-    "subject": "Verify your NU Connect account",
-    "html": html_body,
-})
+            "from": "NU Connect <onboarding@resend.dev>",
+            "to": new_user.email,
+            "subject": "Verify your NU Connect account",
+            "html": html_body,
+        })
         print(f"[EMAIL] ✅ Sent successfully to: {new_user.email}")
     except Exception as e:
         print(f"[EMAIL] ❌ FAILED: {type(e).__name__}: {e}")
@@ -244,13 +223,16 @@ async def resend_verification(email: str = Form(...), db: Session = Depends(get_
     </div>
     """
 
-    message = MessageSchema(
-        subject="Verify your NU Connect account",
-        recipients=[user.email],
-        body=html_body,
-        subtype=MessageType.html,
-    )
-    await fastmail.send_message(message)
+    try:
+        resend.Emails.send({
+            "from": "NU Connect <onboarding@resend.dev>",
+            "to": user.email,
+            "subject": "Verify your NU Connect account",
+            "html": html_body,
+        })
+    except Exception as e:
+        print(f"[EMAIL] ❌ Resend failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send verification email")
 
     return {"message": "Verification email resent"}
 
@@ -265,7 +247,6 @@ def login(
     if not db_user or not verify_password(password, db_user.password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    # ← Block unverified users
     if not db_user.verified:
         raise HTTPException(
             status_code=403,
@@ -281,13 +262,12 @@ def login(
         "token_type": "bearer",
         "user_id": db_user.id,
     }
-    
+
 @app.post("/refresh", response_model=TokenPair)
 def refresh_token(refresh_token: str, db: Session = Depends(get_db)):
     try:
         payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
-        
         if user_id is None:
             raise HTTPException(status_code=401, detail="Invalid refresh token")
     except JWTError:
@@ -506,19 +486,17 @@ async def create_post(
     return {"message": "Post created", "post_id": new_post.id, "images": image_urls}
 
 
-# ✅ FIXED: now saves PostImage row so images appear in /users/{id}/posts
 @app.post("/post-with-image")
 def create_post_with_image(
     content: str = Form(...),
     file: UploadFile = File(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),  # ✅ now uses real auth, not raw author_id
+    current_user: User = Depends(get_current_user),
 ):
     try:
-        # 1. Create the Post row first
         post = Post(
             id=str(uuid.uuid4()),
-            author_id=current_user.id,  # ✅ from token, not form
+            author_id=current_user.id,
             content=content,
             created_at=datetime.utcnow(),
         )
@@ -526,7 +504,6 @@ def create_post_with_image(
         db.commit()
         db.refresh(post)
 
-        # 2. If an image was uploaded, save file AND create PostImage row
         image_url = None
         if file and file.filename:
             if not file.content_type.startswith("image/"):
@@ -541,7 +518,6 @@ def create_post_with_image(
 
             image_url = f"/uploads/posts/{filename}"
 
-            # ✅ THIS WAS THE MISSING LINE — create PostImage row in DB
             post_image = PostImage(
                 id=str(uuid.uuid4()),
                 post_id=post.id,
@@ -629,7 +605,6 @@ def get_likes(post_id: str, db: Session = Depends(get_db)):
 
 # ── COMMENTS ─────────────────────────────────────────────
 
-# UNCOMMENT THIS:
 @app.post("/posts/{post_id}/comment")
 def create_comment(
     post_id: str,
@@ -659,7 +634,7 @@ def create_comment(
         },
     }
 
-# UNCOMMENT THIS:
+
 @app.get("/posts/{post_id}/comments")
 def get_comments(post_id: str, db: Session = Depends(get_db)):
     comments = db.query(Comment).filter(Comment.post_id == post_id).all()
@@ -673,6 +648,7 @@ def get_comments(post_id: str, db: Session = Depends(get_db)):
         }
         for c in comments
     ]
+
 
 @app.get("/search")
 def search_users(query: str, db: Session = Depends(get_db)):
@@ -720,26 +696,19 @@ def get_chats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # IDs of people current user follows
-    following = db.query(Follow).filter(
-        Follow.follower_id == current_user.id
-    ).all()
+    following = db.query(Follow).filter(Follow.follower_id == current_user.id).all()
     following_ids = set(f.following_id for f in following)
- 
-    # IDs of people who follow current user back
-    followers = db.query(Follow).filter(
-        Follow.following_id == current_user.id
-    ).all()
+
+    followers = db.query(Follow).filter(Follow.following_id == current_user.id).all()
     follower_ids = set(f.follower_id for f in followers)
- 
-    # Only mutual: in both sets
+
     mutual_ids = following_ids & follower_ids
- 
+
     if not mutual_ids:
         return []
- 
+
     users = db.query(User).filter(User.id.in_(mutual_ids)).all()
- 
+
     return [
         {
             "user_id": user.id,
@@ -750,6 +719,8 @@ def get_chats(
         }
         for user in users
     ]
+
+
 @app.delete("/posts/{post_id}")
 def delete_post(
     post_id: str,
@@ -816,7 +787,6 @@ def get_messages(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # verify user is a participant
     participant = db.query(ConversationParticipant).filter(
         ConversationParticipant.conversation_id == conversation_id,
         ConversationParticipant.user_id == current_user.id,
@@ -848,7 +818,6 @@ def send_message(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # verify user is a participant
     participant = db.query(ConversationParticipant).filter(
         ConversationParticipant.conversation_id == conversation_id,
         ConversationParticipant.user_id == current_user.id,
@@ -878,6 +847,7 @@ def send_message(
         "created_at": msg.created_at,
     }
 
+
 @app.get("/conversations/{conversation_id}")
 def get_conversation_messages(conversation_id: str, db: Session = Depends(get_db)):
     messages = db.query(Message).filter(
@@ -894,24 +864,18 @@ def get_conversation_messages(conversation_id: str, db: Session = Depends(get_db
         for m in messages
     ]
 
+
 @app.post("/conversations")
 def create_conversation(
     user_id: str = Form(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # check if conversation already exists
-    existing = db.query(ConversationParticipant).filter(
-        ConversationParticipant.user_id.in_([current_user.id, user_id])
-    ).all()
-
-    # simple version: always create new
     conversation = Conversation(id=str(uuid.uuid4()))
     db.add(conversation)
     db.commit()
     db.refresh(conversation)
 
-    # add both users
     db.add_all([
         ConversationParticipant(
             id=str(uuid.uuid4()),
@@ -938,7 +902,6 @@ def create_or_get_conversation(
     if current_user.id == other_user_id:
         raise HTTPException(status_code=400, detail="Cannot create conversation with yourself")
 
-    # Step 1: check if conversation already exists between both users
     existing_conversation = (
         db.query(Conversation)
         .join(ConversationParticipant)
@@ -956,13 +919,11 @@ def create_or_get_conversation(
         if participant_ids == {current_user.id, other_user_id}:
             return {"conversation_id": convo.id}
 
-    # Step 2: create new conversation
     conversation = Conversation(id=str(uuid.uuid4()))
     db.add(conversation)
     db.commit()
     db.refresh(conversation)
 
-    # Step 3: add participants
     db.add_all([
         ConversationParticipant(
             id=str(uuid.uuid4()),
@@ -981,59 +942,40 @@ def create_or_get_conversation(
     return {"conversation_id": conversation.id}
 
 
-
 @app.delete("/messages/{message_id}")
 def delete_message(
     message_id: str,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user)
 ):
-    # 1. Find message
     message = db.query(Message).filter(Message.id == message_id).first()
 
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    # 2. Check ownership (IMPORTANT)
     if str(message.sender_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Not allowed to delete this message")
 
-    # 3. Delete message
     db.delete(message)
     db.commit()
 
     return {"message": "Message deleted successfully"}
 
+
 @app.put("/messages/{message_id}")
-def update_message(message_id: int, body: MessageUpdate, db: Session = Depends(get_db)):
+def update_message(message_id: str, body: MessageUpdate, db: Session = Depends(get_db)):
     message = db.query(Message).filter(Message.id == message_id).first()
 
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
 
     message.content = body.content
-    message.edited = True  # optional
+    message.edited = True
 
     db.commit()
     db.refresh(message)
 
     return message
- 
-@app.delete("/messages/{message_id}")
-def delete_message(message_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-
-    msg = db.query(Message).filter(Message.id == message_id).first()
-
-    if not msg:
-        raise HTTPException(status_code=404, detail="Not found")
-
-    if msg.sender_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not allowed")
-
-    db.delete(msg)
-    db.commit()
-
-    return {"message": "deleted"}
 
 
 @app.delete("/users/{user_id}")
@@ -1042,32 +984,27 @@ def delete_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Only allow deleting your own account
     if current_user.id != user_id:
         raise HTTPException(status_code=403, detail="Not allowed to delete another user's account")
- 
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
- 
-    # Delete all related data first (avoid FK constraint errors)
+
     db.query(PostLike).filter(PostLike.user_id == user_id).delete()
     db.query(Comment).filter(Comment.author_id == user_id).delete()
- 
-    # Delete user's post images and posts
+
     user_posts = db.query(Post).filter(Post.author_id == user_id).all()
     for post in user_posts:
         db.query(PostImage).filter(PostImage.post_id == post.id).delete()
         db.query(PostLike).filter(PostLike.post_id == post.id).delete()
         db.query(Comment).filter(Comment.post_id == post.id).delete()
     db.query(Post).filter(Post.author_id == user_id).delete()
- 
-    # Delete follow relationships
+
     db.query(Follow).filter(
         (Follow.follower_id == user_id) | (Follow.following_id == user_id)
     ).delete()
- 
-    # Delete conversation participations and messages
+
     participations = db.query(ConversationParticipant).filter(
         ConversationParticipant.user_id == user_id
     ).all()
@@ -1077,23 +1014,42 @@ def delete_user(
             ConversationParticipant.conversation_id == p.conversation_id
         ).delete()
         db.query(Conversation).filter(Conversation.id == p.conversation_id).delete()
- 
-    # Finally delete the user
+
     db.delete(user)
     db.commit()
- 
+
     return {"message": "Account deleted successfully"}
+
+
 @app.post("/forgot-password")
 def forgot_password(email: str = Form(...), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise HTTPException(status_code=404, detail="No account found with this email")
 
-    token = create_verification_token(email)  # reuse your existing function
-    reset_link = f"http://127.0.0.1:8000/reset-password?token={token}"
+    token = create_verification_token(email)
+    reset_link = f"{BASE_URL}/reset-password?token={token}"
 
-    # For now just return the link (until you configure email sending)
-    return {"message": "Password reset link generated", "reset_link": reset_link}
+    try:
+        resend.Emails.send({
+            "from": "NU Connect <onboarding@resend.dev>",
+            "to": email,
+            "subject": "Reset your NU Connect password",
+            "html": f"""
+            <div style="font-family: Arial, sans-serif; padding: 30px;">
+                <h2 style="color: #007AFF;">Reset your password</h2>
+                <p>Click below to reset your password:</p>
+                <a href="{reset_link}" style="padding: 12px 24px; background: #007AFF; color: white; border-radius: 8px; text-decoration: none;">
+                    Reset Password
+                </a>
+                <p style="color: #888; font-size: 13px;">Expires in 24 hours.</p>
+            </div>
+            """,
+        })
+    except Exception as e:
+        print(f"[EMAIL] ❌ Failed to send reset email: {e}")
+
+    return {"message": "Password reset link sent to your email"}
 
 
 @app.post("/reset-password")
@@ -1102,7 +1058,7 @@ def reset_password(
     new_password: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    email = decode_verification_token(token)  # reuse your existing function
+    email = decode_verification_token(token)
     if not email:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
 
@@ -1114,6 +1070,7 @@ def reset_password(
     db.commit()
 
     return {"message": "Password reset successful"}
+
 
 def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
     if current_user.email != "l240944@lhr.nu.edu.pk":
@@ -1173,7 +1130,6 @@ def admin_delete_post(
     return {"message": f"Post {post_id} deleted by admin"}
 
 
-
 @app.delete("/admin/users/{user_id}")
 def admin_delete_user(
     user_id: str,
@@ -1185,6 +1141,7 @@ def admin_delete_user(
         raise HTTPException(status_code=404, detail="User not found")
     if user.username == "admin":
         raise HTTPException(status_code=400, detail="Cannot delete admin account")
+
     db.query(PostLike).filter(PostLike.user_id == user_id).delete()
     db.query(Comment).filter(Comment.author_id == user_id).delete()
     user_posts = db.query(Post).filter(Post.author_id == user_id).all()
@@ -1208,51 +1165,3 @@ def admin_delete_user(
     db.delete(user)
     db.commit()
     return {"message": f"User {user_id} deleted by admin"}
-
-@app.delete("/users/{user_id}")
-def delete_user(
-    user_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    # Only allow deleting your own account
-    if current_user.id != user_id:
-        raise HTTPException(status_code=403, detail="Not allowed to delete another user's account")
- 
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
- 
-    # Delete all related data first (avoid FK constraint errors)
-    db.query(PostLike).filter(PostLike.user_id == user_id).delete()
-    db.query(Comment).filter(Comment.author_id == user_id).delete()
- 
-    # Delete user's post images and posts
-    user_posts = db.query(Post).filter(Post.author_id == user_id).all()
-    for post in user_posts:
-        db.query(PostImage).filter(PostImage.post_id == post.id).delete()
-        db.query(PostLike).filter(PostLike.post_id == post.id).delete()
-        db.query(Comment).filter(Comment.post_id == post.id).delete()
-    db.query(Post).filter(Post.author_id == user_id).delete()
- 
-    # Delete follow relationships
-    db.query(Follow).filter(
-        (Follow.follower_id == user_id) | (Follow.following_id == user_id)
-    ).delete()
- 
-    # Delete conversation participations and messages
-    participations = db.query(ConversationParticipant).filter(
-        ConversationParticipant.user_id == user_id
-    ).all()
-    for p in participations:
-        db.query(Message).filter(Message.conversation_id == p.conversation_id).delete()
-        db.query(ConversationParticipant).filter(
-            ConversationParticipant.conversation_id == p.conversation_id
-        ).delete()
-        db.query(Conversation).filter(Conversation.id == p.conversation_id).delete()
- 
-    # Finally delete the user
-    db.delete(user)
-    db.commit()
- 
-    return {"message": "Account deleted successfully"}
