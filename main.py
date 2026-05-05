@@ -668,42 +668,61 @@ def delete_comment(
 
 
 # ── CHATS ─────────────────────────────────────────────────
-
 @app.get("/chats")
 def get_chats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # IDs of people current user follows
-    following = db.query(Follow).filter(
-        Follow.follower_id == current_user.id
-    ).all()
-    following_ids = set(f.following_id for f in following)
- 
-    # IDs of people who follow current user back
-    followers = db.query(Follow).filter(
-        Follow.following_id == current_user.id
-    ).all()
-    follower_ids = set(f.follower_id for f in followers)
- 
-    # Only mutual: in both sets
+    # Get mutual follows
+    following_ids = set(f.following_id for f in db.query(Follow).filter(Follow.follower_id == current_user.id).all())
+    follower_ids = set(f.follower_id for f in db.query(Follow).filter(Follow.following_id == current_user.id).all())
     mutual_ids = following_ids & follower_ids
- 
+
     if not mutual_ids:
         return []
- 
+
     users = db.query(User).filter(User.id.in_(mutual_ids)).all()
- 
-    return [
-        {
+
+    result = []
+    for user in users:
+        # Find conversation between current user and this user
+        conversation = None
+        my_convos = db.query(ConversationParticipant).filter(
+            ConversationParticipant.user_id == current_user.id
+        ).all()
+
+        for cp in my_convos:
+            participants = db.query(ConversationParticipant).filter(
+                ConversationParticipant.conversation_id == cp.conversation_id
+            ).all()
+            participant_ids = {p.user_id for p in participants}
+            if participant_ids == {current_user.id, user.id}:
+                conversation = cp.conversation_id
+                break
+
+        # Get last message if conversation exists
+        last_message = None
+        timestamp = None
+        if conversation:
+            last_msg = db.query(Message).filter(
+                Message.conversation_id == conversation
+            ).order_by(Message.created_at.desc()).first()
+
+            if last_msg:
+                last_message = last_msg.content
+                timestamp = last_msg.created_at.isoformat() if last_msg.created_at else None
+
+        result.append({
             "user_id": user.id,
             "username": user.username,
-            "profile_pic": f"http://127.0.0.1:8000{user.profile_pic}" if user.profile_pic else None,
-            "last_message": "Start chatting 👋",
-            "timestamp": None,
-        }
-        for user in users
-    ]
+            "profile_pic": f"https://sda-app-backend.onrender.com{user.profile_pic}" if user.profile_pic else None,
+            "last_message": last_message,
+            "timestamp": timestamp,
+        })
+
+    # Sort by most recent message first
+    result.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+    return result
 @app.delete("/posts/{post_id}")
 def delete_post(
     post_id: str,
