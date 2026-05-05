@@ -11,120 +11,73 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
-
-from models import Conversation, ConversationParticipant
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+from fastapi.responses import HTMLResponse
+import re
+from sqlalchemy import text
 
 from models import (
     User, Follow, Post, PostImage, PostLike, Comment,
     Conversation, ConversationParticipant, Message
 )
-
 from database import get_db, engine, Base
-# from models import User, Follow, Post, PostImage, PostLike, Comment, Conversation, Message, ConversationParticipant
-from schema import TokenPair, UserCreate, UserUpdate, CommentCreate
+from schema import TokenPair, UserCreate, UserUpdate, CommentCreate, MessageUpdate
 
+# ── DB Init ───────────────────────────────────────────────
+Base.metadata.create_all(bind=engine)
 
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
-from fastapi.responses import HTMLResponse
+# ── Config ────────────────────────────────────────────────
+SECRET_KEY = "fbab35ec4019c91b7d06cd19a0e7290ca81d7b6bed0ea43e1fdcfa7128e7c1f2"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+BASE_URL = "https://sda-app-backend.onrender.com"  # ← your backend URL
 
-import re
-import socket
-import smtplib
-import dns.resolver
-
-from sqlalchemy import text
-
-
-
-
-# with engine.connect() as conn:
-#     conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE;"))
-#     conn.commit()
-    
-    
-NU_EMAIL_REGEX = re.compile(r'^l\d{6}@lhr\.nu\.edu\.pk$', re.IGNORECASE)
-
-def validate_nu_email_format(email: str) -> None:
-    if not NU_EMAIL_REGEX.match(email):
-        raise HTTPException(
-            status_code=400,
-            detail="Email must be in the format lXXXXXX@lhr.nu.edu.pk (e.g. l123456@lhr.nu.edu.pk)"
-        )
-
-def create_verification_token(email: str) -> str:
-    expire = datetime.utcnow() + timedelta(hours=24)
-    return jwt.encode({"sub": email, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
-
-
-
-def decode_verification_token(token: str) -> str:
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload.get("sub")   # returns the email
-    except JWTError:
-        return None
-
+# ── Email Config ──────────────────────────────────────────
+mail_config = ConnectionConfig(
+    MAIL_USERNAME="unifisocialnetworkingapp@gmail.com",        # ← your Gmail
+    MAIL_PASSWORD="armstormammara1104",         # ← Gmail App Password
+    MAIL_FROM="unifisocialnetworkingapp@gmail.com",            # ← same Gmail
+    MAIL_FROM_NAME="NU Connect",
+    MAIL_PORT=587,
+    MAIL_SERVER="smtp.gmail.com",
+    MAIL_STARTTLS=True,
+    MAIL_SSL_TLS=False,
+    USE_CREDENTIALS=True,
+)
+fastmail = FastMail(mail_config)
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    # allow_origins=[
-    #     "http://localhost:8081",
-    #     "http://127.0.0.1:8081",  # ✅ add this
-    #     "http://127.0.0.1:8082",
-    #     "http://localhost:8000",
-    #     "http://localhost:8082",
-    #     "https://sda-front-end-xhiu.vercel.app"
-        
-    # ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Static Files & Upload Dirs ────────────────────────────
-
 os.makedirs("uploads/user_profile", exist_ok=True)
 os.makedirs("uploads/posts", exist_ok=True)
-
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
-# mail_config = ConnectionConfig(
-#     MAIL_USERNAME="your_gmail@gmail.com",
-#     MAIL_PASSWORD="your_app_password",   # Gmail App Password, NOT your real password
-#     MAIL_FROM="your_gmail@gmail.com",
-#     MAIL_PORT=587,
-#     MAIL_SERVER="smtp.gmail.com",
-#     MAIL_STARTTLS=True,
-#     MAIL_SSL_TLS=False,
-#     USE_CREDENTIALS=True,
-# )
-
-# fastmail = FastMail(mail_config)
-# ── DB Init ───────────────────────────────────────────────
-
-Base.metadata.create_all(bind=engine)
-
-# ── Config ────────────────────────────────────────────────
-
-SECRET_KEY = "fbab35ec4019c91b7d06cd19a0e7290ca81d7b6bed0ea43e1fdcfa7128e7c1f2"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
-# ── Auth Helpers ──────────────────────────────────────────
+NU_EMAIL_REGEX = re.compile(r'^l\d{6}@lhr\.nu\.edu\.pk$', re.IGNORECASE)
+
+# ── Helpers ───────────────────────────────────────────────
+
+def validate_nu_email_format(email: str) -> None:
+    if not NU_EMAIL_REGEX.match(email):
+        raise HTTPException(
+            status_code=400,
+            detail="Email must be in the format lXXXXXX@lhr.nu.edu.pk"
+        )
 
 def hash_password(password: str) -> str:
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
-
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
-
 
 def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     to_encode = data.copy()
@@ -132,39 +85,38 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-
 def decode_access_token(token: str):
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None
 
+def create_verification_token(email: str) -> str:
+    expire = datetime.utcnow() + timedelta(hours=24)
+    return jwt.encode({"sub": email, "exp": expire, "type": "verify"}, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_verification_token(token: str) -> str | None:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "verify":
+            return None
+        return payload.get("sub")
+    except JWTError:
+        return None
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     payload = decode_access_token(token)
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid token")
-
     user = db.query(User).filter(User.id == payload.get("sub")).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
-
-    return user
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    payload = decode_access_token(token)
-    if payload is None:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = db.query(User).filter(User.id == payload.get("sub")).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
     return user
 
 # ── AUTH ──────────────────────────────────────────────────
+
 @app.post("/signup")
-def signup(user: UserCreate, db: Session = Depends(get_db)):
+async def signup(user: UserCreate, db: Session = Depends(get_db)):
     validate_nu_email_format(user.email)
 
     if db.query(User).filter(User.username == user.username).first():
@@ -182,6 +134,7 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
         university=user.university,
         department=user.department,
         bio=user.bio,
+        verified=False,          # ← starts unverified
     )
 
     try:
@@ -192,28 +145,104 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail="Database insertion failed")
 
-    return {"message": "User created successfully"}
+    # Send verification email
+    token = create_verification_token(new_user.email)
+    verify_link = f"{BASE_URL}/verify-email?token={token}"
+
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto; padding: 30px; border-radius: 10px; background: #f9f9f9;">
+        <h2 style="color: #007AFF;">Welcome to NU Connect! 👋</h2>
+        <p>Hi <b>{new_user.username}</b>, thanks for signing up.</p>
+        <p>Please verify your email address by clicking the button below:</p>
+        <a href="{verify_link}" 
+           style="display: inline-block; padding: 12px 24px; background: #007AFF; color: white; 
+                  border-radius: 8px; text-decoration: none; font-weight: bold; margin: 16px 0;">
+            Verify Email
+        </a>
+        <p style="color: #888; font-size: 13px;">This link expires in 24 hours.</p>
+        <p style="color: #888; font-size: 13px;">If you didn't sign up, ignore this email.</p>
+    </div>
+    """
+
+    message = MessageSchema(
+        subject="Verify your NU Connect account",
+        recipients=[new_user.email],
+        body=html_body,
+        subtype=MessageType.html,
+    )
+
+    try:
+        await fastmail.send_message(message)
+    except Exception as e:
+        print(f"Email sending failed: {e}")
+        # Don't block signup if email fails, just log it
+
+    return {"message": "Account created! Please check your email to verify your account."}
 
 
+@app.get("/verify-email")
+def verify_email(token: str, db: Session = Depends(get_db)):
+    email = decode_verification_token(token)
 
-# @app.get("/verify-email")
-# def verify_email(token: str, db: Session = Depends(get_db)):
-#     email = decode_verification_token(token)
+    if not email:
+        return HTMLResponse("""
+            <h2 style="color:red; font-family:Arial">❌ Invalid or expired link.</h2>
+            <p>Please sign up again or request a new verification email.</p>
+        """)
 
-#     if not email:
-#         raise HTTPException(status_code=400, detail="Invalid or expired verification link")
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        return HTMLResponse("<h2>User not found.</h2>")
 
-#     user = db.query(User).filter(User.email == email).first()
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
+    if user.verified:
+        return HTMLResponse("""
+            <h2 style="font-family:Arial">✅ Already verified!</h2>
+            <p>You can log in to NU Connect.</p>
+        """)
 
-#     if user.verified:
-#         return HTMLResponse("<h2>Email already verified. You can log in!</h2>")
+    user.verified = True
+    db.commit()
 
-#     user.verified = True
-#     db.commit()
+    return HTMLResponse("""
+        <div style="font-family:Arial; text-align:center; padding:40px;">
+            <h2 style="color:#007AFF">✅ Email Verified!</h2>
+            <p>Your account is now active. You can now log in to <b>NU Connect</b>.</p>
+        </div>
+    """)
 
-#     return HTMLResponse("<h2>Email verified successfully! You can now log in to NU Connect.</h2>")
+
+@app.post("/resend-verification")
+async def resend_verification(email: str = Form(...), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No account with this email")
+
+    if user.verified:
+        raise HTTPException(status_code=400, detail="Email already verified")
+
+    token = create_verification_token(user.email)
+    verify_link = f"{BASE_URL}/verify-email?token={token}"
+
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; padding: 30px;">
+        <h2 style="color: #007AFF;">Verify your NU Connect account</h2>
+        <p>Click below to verify your email:</p>
+        <a href="{verify_link}" style="padding: 12px 24px; background: #007AFF; color: white; border-radius: 8px; text-decoration: none;">
+            Verify Email
+        </a>
+        <p style="color: #888; font-size: 13px;">Expires in 24 hours.</p>
+    </div>
+    """
+
+    message = MessageSchema(
+        subject="Verify your NU Connect account",
+        recipients=[user.email],
+        body=html_body,
+        subtype=MessageType.html,
+    )
+    await fastmail.send_message(message)
+
+    return {"message": "Verification email resent"}
 
 
 @app.post("/login", response_model=TokenPair)
@@ -226,6 +255,13 @@ def login(
     if not db_user or not verify_password(password, db_user.password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
+    # ← Block unverified users
+    if not db_user.verified:
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email before logging in. Check your inbox."
+        )
+
     access_token = create_access_token(data={"sub": db_user.id})
     refresh_token = create_access_token(data={"sub": db_user.id}, expires_delta=timedelta(days=7))
 
@@ -233,8 +269,8 @@ def login(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "user_id": db_user.id,  
-    }  
+        "user_id": db_user.id,
+    }
     
 @app.post("/refresh", response_model=TokenPair)
 def refresh_token(refresh_token: str, db: Session = Depends(get_db)):
@@ -668,61 +704,42 @@ def delete_comment(
 
 
 # ── CHATS ─────────────────────────────────────────────────
+
 @app.get("/chats")
 def get_chats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Get mutual follows
-    following_ids = set(f.following_id for f in db.query(Follow).filter(Follow.follower_id == current_user.id).all())
-    follower_ids = set(f.follower_id for f in db.query(Follow).filter(Follow.following_id == current_user.id).all())
+    # IDs of people current user follows
+    following = db.query(Follow).filter(
+        Follow.follower_id == current_user.id
+    ).all()
+    following_ids = set(f.following_id for f in following)
+ 
+    # IDs of people who follow current user back
+    followers = db.query(Follow).filter(
+        Follow.following_id == current_user.id
+    ).all()
+    follower_ids = set(f.follower_id for f in followers)
+ 
+    # Only mutual: in both sets
     mutual_ids = following_ids & follower_ids
-
+ 
     if not mutual_ids:
         return []
-
+ 
     users = db.query(User).filter(User.id.in_(mutual_ids)).all()
-
-    result = []
-    for user in users:
-        # Find conversation between current user and this user
-        conversation = None
-        my_convos = db.query(ConversationParticipant).filter(
-            ConversationParticipant.user_id == current_user.id
-        ).all()
-
-        for cp in my_convos:
-            participants = db.query(ConversationParticipant).filter(
-                ConversationParticipant.conversation_id == cp.conversation_id
-            ).all()
-            participant_ids = {p.user_id for p in participants}
-            if participant_ids == {current_user.id, user.id}:
-                conversation = cp.conversation_id
-                break
-
-        # Get last message if conversation exists
-        last_message = None
-        timestamp = None
-        if conversation:
-            last_msg = db.query(Message).filter(
-                Message.conversation_id == conversation
-            ).order_by(Message.created_at.desc()).first()
-
-            if last_msg:
-                last_message = last_msg.content
-                timestamp = last_msg.created_at.isoformat() if last_msg.created_at else None
-
-        result.append({
+ 
+    return [
+        {
             "user_id": user.id,
             "username": user.username,
-            "profile_pic": f"https://sda-app-backend.onrender.com{user.profile_pic}" if user.profile_pic else None,
-            "last_message": last_message,
-            "timestamp": timestamp,
-        })
-
-    # Sort by most recent message first
-    result.sort(key=lambda x: x["timestamp"] or "", reverse=True)
-    return result
+            "profile_pic": f"http://127.0.0.1:8000{user.profile_pic}" if user.profile_pic else None,
+            "last_message": "Start chatting 👋",
+            "timestamp": None,
+        }
+        for user in users
+    ]
 @app.delete("/posts/{post_id}")
 def delete_post(
     post_id: str,
