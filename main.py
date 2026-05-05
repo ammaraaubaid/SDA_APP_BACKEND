@@ -172,10 +172,13 @@ async def signup(user: UserCreate, db: Session = Depends(get_db)):
     )
 
     try:
+        print(f"[EMAIL] Attempting to send to: {new_user.email}")
         await fastmail.send_message(message)
+        print(f"[EMAIL] ✅ Sent successfully to: {new_user.email}")
     except Exception as e:
-        print(f"Email sending failed: {e}")
-        # Don't block signup if email fails, just log it
+        print(f"[EMAIL] ❌ FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
 
     return {"message": "Account created! Please check your email to verify your account."}
 
