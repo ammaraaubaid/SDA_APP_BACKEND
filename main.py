@@ -35,7 +35,7 @@ BASE_URL = "https://sda-app-backend.onrender.com"  # ← your backend URL
 # ── Email Config ──────────────────────────────────────────
 mail_config = ConnectionConfig(
     MAIL_USERNAME="unifisocialnetworkingapp@gmail.com",        # ← your Gmail
-    MAIL_PASSWORD="armstormammara1104",         # ← Gmail App Password
+    MAIL_PASSWORD="btla ldzd gsef mpcp",         # ← Gmail App Password
     MAIL_FROM="unifisocialnetworkingapp@gmail.com",            # ← same Gmail
     MAIL_FROM_NAME="NU Connect",
     MAIL_PORT=587,
